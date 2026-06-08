@@ -6,9 +6,16 @@
       "maxDuration": 30
     }
   },
+  "redirects": [
+    {
+      "source": "/app.js",
+      "destination": "/assets/proxyv-client.js",
+      "permanent": false
+    }
+  ],
   "rewrites": [
     {
-      "source": "/((?!api/|app.js|styles.css|404.html).*)",
+      "source": "/((?!api/|assets/|styles.css|404.html).*)",
       "destination": "/index.html"
     }
   ]
