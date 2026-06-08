@@ -203,18 +203,6 @@ h1 {
   color: var(--muted);
 }
 
-.frame-mount,
-.proxy-frame {
-  width: 100%;
-  height: 100%;
-}
-
-.proxy-frame {
-  display: block;
-  border: 0;
-  background: white;
-}
-
 .sr-only {
   position: absolute;
   width: 1px;

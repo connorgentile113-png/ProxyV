@@ -4,7 +4,6 @@ const form = document.getElementById("proxyForm");
 const addressInput = document.getElementById("addressInput");
 const connectionLabel = document.getElementById("connectionLabel");
 const emptyState = document.getElementById("emptyState");
-const frameMount = document.getElementById("frameMount");
 const homeButton = document.getElementById("homeButton");
 const reloadButton = document.getElementById("reloadButton");
 const detachButton = document.getElementById("detachButton");
@@ -21,15 +20,13 @@ form.addEventListener("submit", (event) => {
 homeButton.addEventListener("click", () => {
   currentUrl = "";
   addressInput.value = "";
-  frameMount.replaceChildren();
   emptyState.hidden = false;
   addressInput.focus();
   void refreshStatus();
 });
 
 reloadButton.addEventListener("click", () => {
-  const frame = frameMount.querySelector("iframe");
-  if (frame?.contentWindow) frame.contentWindow.location.reload();
+  window.location.reload();
 });
 
 detachButton.addEventListener("click", () => {
@@ -44,19 +41,8 @@ function navigate(input) {
 
   currentUrl = url;
   addressInput.value = url;
-  emptyState.hidden = true;
   connectionLabel.textContent = new URL(url).hostname;
-
-  let frame = frameMount.querySelector("iframe");
-  if (!frame) {
-    frame = document.createElement("iframe");
-    frame.title = "ProxyV browser";
-    frame.className = "proxy-frame";
-    frame.referrerPolicy = "no-referrer";
-    frameMount.replaceChildren(frame);
-  }
-
-  frame.src = toProxyUrl(url);
+  window.location.href = toProxyUrl(url);
 }
 
 function normalizeAddress(input) {
