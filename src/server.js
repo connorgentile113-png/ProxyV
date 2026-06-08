@@ -2,11 +2,16 @@ const { createReadStream, existsSync, statSync } = require("node:fs");
 const { createServer } = require("node:http");
 const { extname, join, normalize } = require("node:path");
 const ngrok = require("@ngrok/ngrok");
-
-const proxyHandler = require("../api/proxy.js");
+const { scramjetPath } = require("@mercuryworkshop/scramjet/path");
+const { createBareServer } = require("@nebula-services/bare-server-node");
 
 const root = join(__dirname, "..");
 const publicDir = join(root, "public");
+const bareMuxDir = join(root, "node_modules", "@mercuryworkshop", "bare-mux", "dist");
+const bareModuleDir = join(root, "node_modules", "@mercuryworkshop", "bare-as-module3", "dist");
+const bareServer = createBareServer("/bare/", {
+  blockLocal: process.env.BARE_BLOCK_LOCAL !== "false"
+});
 const port = Number.parseInt(process.env.PORT || "8080", 10);
 const host = process.env.HOST || "0.0.0.0";
 let ngrokListener = null;
@@ -20,17 +25,14 @@ const mimeTypes = {
   ".html": "text/html; charset=utf-8",
   ".ico": "image/x-icon",
   ".js": "application/javascript; charset=utf-8",
+  ".mjs": "application/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
   ".png": "image/png",
-  ".svg": "image/svg+xml"
+  ".svg": "image/svg+xml",
+  ".wasm": "application/wasm"
 };
 
 const server = createServer(async (request, response) => {
-  if (request.url && request.url.startsWith("/api/proxy")) {
-    await proxyHandler(request, response);
-    return;
-  }
-
   if (request.url === "/api/status") {
     sendJson(response, {
       mode: ngrokUrl ? "ngrok tunnel online" : `ngrok ${ngrokState}`,
@@ -42,9 +44,25 @@ const server = createServer(async (request, response) => {
     return;
   }
 
-  if (await proxyImplicitRequest(request, response)) return;
+  if (bareServer.shouldRoute(request)) {
+    await bareServer.routeRequest(request, response);
+    return;
+  }
+
+  if (serveDependencyStatic(request, response, "/scramjet/", scramjetPath)) return;
+  if (serveDependencyStatic(request, response, "/baremux/", bareMuxDir)) return;
+  if (serveDependencyStatic(request, response, "/baremod/", bareModuleDir)) return;
 
   serveStatic(request, response);
+});
+
+server.on("upgrade", (request, socket, head) => {
+  if (bareServer.shouldRoute(request)) {
+    void bareServer.routeUpgrade(request, socket, head);
+    return;
+  }
+
+  socket.destroy();
 });
 
 server.listen(port, host, async () => {
@@ -120,64 +138,24 @@ function serveStatic(request, response) {
   createReadStream(filePath).pipe(response);
 }
 
-async function proxyImplicitRequest(request, response) {
-  const target = inferTargetFromProxiedReferer(request);
-  if (!target) return false;
+function serveDependencyStatic(request, response, prefix, directory) {
+  const url = new URL(request.url || "/", `http://${request.headers.host}`);
+  if (!url.pathname.startsWith(prefix)) return false;
 
-  request.url = `/api/proxy?u=${encodeURIComponent(toBase64Url(target))}`;
-  await proxyHandler(request, response);
+  const relativePath = url.pathname.slice(prefix.length) || "index.js";
+  const safePath = normalize(relativePath).replace(/^(\.\.[/\\])+/, "");
+  const filePath = join(directory, safePath);
+
+  if (!filePath.startsWith(directory) || !existsSync(filePath) || statSync(filePath).isDirectory()) {
+    response.statusCode = 404;
+    response.end("Not found");
+    return true;
+  }
+
+  response.setHeader("Content-Type", mimeTypes[extname(filePath)] || "application/octet-stream");
+  response.setHeader("Cache-Control", "public, max-age=3600");
+  createReadStream(filePath).pipe(response);
   return true;
-}
-
-function inferTargetFromProxiedReferer(request) {
-  if (!request.url || request.url.startsWith("/api/")) return "";
-
-  const requested = new URL(request.url, getRequestOrigin(request) || "http://localhost");
-  if (requested.pathname === "/" || existingPublicFile(requested.pathname)) return "";
-
-  const referer = request.headers.referer || request.headers.referrer;
-  if (!referer) return "";
-
-  let refererUrl;
-  try {
-    refererUrl = new URL(referer, getRequestOrigin(request) || "http://localhost");
-  } catch {
-    return "";
-  }
-
-  if (refererUrl.pathname !== "/api/proxy") return "";
-
-  const baseTarget = getProxyTarget(refererUrl);
-  if (!baseTarget) return "";
-
-  try {
-    return new URL(request.url, baseTarget).href;
-  } catch {
-    return "";
-  }
-}
-
-function existingPublicFile(pathname) {
-  const safePath = normalize(pathname).replace(/^(\.\.[/\\])+/, "");
-  const filePath = join(publicDir, safePath);
-  return filePath.startsWith(publicDir) && existsSync(filePath) && !statSync(filePath).isDirectory();
-}
-
-function getProxyTarget(proxyUrl) {
-  const encoded = proxyUrl.searchParams.get("u");
-  if (encoded) {
-    try {
-      return Buffer.from(encoded, "base64url").toString("utf8");
-    } catch {
-      return "";
-    }
-  }
-
-  return proxyUrl.searchParams.get("url") || "";
-}
-
-function toBase64Url(value) {
-  return Buffer.from(value, "utf8").toString("base64url");
 }
 
 function sendJson(response, data) {

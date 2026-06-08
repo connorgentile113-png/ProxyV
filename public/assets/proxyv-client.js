@@ -17,7 +17,10 @@ const proxyFrame = document.getElementById("proxyFrame");
 
 const searchTemplate = "https://www.google.com/search?q=%s";
 let currentUrl = "";
-let pendingFrameUrl = "";
+let scramjet = null;
+let scramjetFrame = null;
+let scramjetReady = null;
+let frameSyncTimer = null;
 const debugEntries = [];
 
 installDebugConsole();
@@ -29,7 +32,6 @@ form.addEventListener("submit", (event) => {
 
 homeButton.addEventListener("click", () => {
   currentUrl = "";
-  pendingFrameUrl = "";
   addressInput.value = "";
   emptyState.hidden = false;
   proxyFrame.hidden = true;
@@ -39,31 +41,17 @@ homeButton.addEventListener("click", () => {
 });
 
 reloadButton.addEventListener("click", () => {
-  if (currentUrl) loadFrame(currentUrl);
+  if (scramjetFrame) scramjetFrame.reload();
+  else if (currentUrl) loadFrame(currentUrl);
 });
 
 detachButton.addEventListener("click", () => {
-  if (currentUrl) window.open(toProxyUrl(currentUrl), "_blank", "noopener,noreferrer");
-});
-
-window.addEventListener("message", (event) => {
-  if (event.origin !== window.location.origin || !event.data || event.data.source !== "proxyv") return;
-
-  if (event.data.type === "navigate" && event.data.url) {
-    navigate(event.data.url);
-    return;
-  }
-
-  if (event.data.type === "loaded" && event.data.url) {
-    currentUrl = event.data.url;
-    addressInput.value = event.data.url;
-    connectionLabel.textContent = new URL(event.data.url).hostname;
-  }
+  if (currentUrl && scramjet) window.open(scramjet.encodeUrl(currentUrl), "_blank", "noopener,noreferrer");
 });
 
 void refreshStatus();
 
-function navigate(input) {
+async function navigate(input) {
   const url = normalizeAddress(input);
   if (!url) return;
 
@@ -72,16 +60,17 @@ function navigate(input) {
   emptyState.hidden = true;
   connectionLabel.textContent = new URL(url).hostname;
   addDebugEntry("info", `navigating to ${url}`);
-  loadFrame(url);
+  await loadFrame(url);
 }
 
-function loadFrame(url) {
-  pendingFrameUrl = toProxyUrl(url);
+async function loadFrame(url) {
+  const frame = await ensureScramjet();
   proxyFrame.hidden = false;
   emptyState.hidden = true;
   proxyFrame.src = "about:blank";
+
   requestAnimationFrame(() => {
-    if (pendingFrameUrl) proxyFrame.src = pendingFrameUrl;
+    frame.go(url);
   });
 }
 
@@ -103,10 +92,6 @@ function normalizeAddress(input) {
   return searchTemplate.replace("%s", encodeURIComponent(value));
 }
 
-function toProxyUrl(url) {
-  return `/api/proxy?u=${encodeURIComponent(toBase64Url(url))}`;
-}
-
 async function refreshStatus() {
   try {
     const response = await fetch("/api/status");
@@ -123,6 +108,91 @@ async function refreshStatus() {
     connectionLabel.textContent = "Status unavailable";
     ngrokUrl.textContent = "Unavailable";
     ngrokUrl.removeAttribute("href");
+  }
+}
+
+function ensureScramjet() {
+  if (scramjetReady) return scramjetReady;
+
+  scramjetReady = (async () => {
+    if (!("serviceWorker" in navigator)) {
+      throw new Error("Service workers are required for Scramjet.");
+    }
+
+    if (!window.BareMux || !window.$scramjetLoadController) {
+      throw new Error("Scramjet assets did not load.");
+    }
+
+    const { ScramjetController } = $scramjetLoadController();
+    scramjet = new ScramjetController({
+      prefix: "/scramjet/",
+      files: {
+        wasm: "/scramjet/scramjet.wasm.wasm",
+        all: "/scramjet/scramjet.all.js",
+        sync: "/scramjet/scramjet.sync.js"
+      }
+    });
+
+    await scramjet.init();
+    await navigator.serviceWorker.register("/scramjet-sw.js", { scope: "/" });
+    await navigator.serviceWorker.ready;
+
+    const connection = new BareMux.BareMuxConnection("/baremux/worker.js");
+    await connection.setTransport("/baremod/index.mjs", [`${location.origin}/bare/`]);
+
+    scramjetFrame = scramjet.createFrame(proxyFrame);
+    scramjetFrame.addEventListener("urlchange", syncFrameUrl);
+    scramjetFrame.addEventListener("navigate", syncFrameUrl);
+    proxyFrame.addEventListener("load", () => syncFrameUrl(), true);
+    if (!frameSyncTimer) frameSyncTimer = setInterval(syncFrameUrl, 750);
+
+    return scramjetFrame;
+  })().catch((error) => {
+    scramjetReady = null;
+    addDebugEntry("error", error.message);
+    connectionLabel.textContent = "Scramjet unavailable";
+    throw error;
+  });
+
+  return scramjetReady;
+}
+
+function syncFrameUrl(event) {
+  const url = event && event.url ? String(event.url) : getCurrentFrameUrl();
+  if (!url) return;
+
+  currentUrl = url;
+  addressInput.value = url;
+  connectionLabel.textContent = new URL(url).hostname;
+  addDebugEntry("info", `frame url changed to ${url}`);
+}
+
+function getCurrentFrameUrl() {
+  if (!scramjet) return "";
+
+  const frameLocation = getFrameLocation();
+  if (frameLocation) {
+    try {
+      return scramjet.decodeUrl(frameLocation);
+    } catch {
+      // Fall back to the iframe src below.
+    }
+  }
+
+  if (!proxyFrame.src || proxyFrame.src === "about:blank") return "";
+
+  try {
+    return scramjet.decodeUrl(proxyFrame.src);
+  } catch {
+    return "";
+  }
+}
+
+function getFrameLocation() {
+  try {
+    return proxyFrame.contentWindow ? proxyFrame.contentWindow.location.href : "";
+  } catch {
+    return "";
   }
 }
 
@@ -186,11 +256,4 @@ function formatDebugValue(value) {
   } catch {
     return String(value);
   }
-}
-
-function toBase64Url(value) {
-  return btoa(unescape(encodeURIComponent(value)))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/g, "");
 }
