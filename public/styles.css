@@ -176,17 +176,6 @@ h1 {
   color: var(--muted);
 }
 
-.quick-links {
-  display: flex;
-  justify-content: center;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.quick-links button {
-  padding: 0 14px;
-}
-
 .frame-mount,
 .proxy-frame {
   width: 100%;

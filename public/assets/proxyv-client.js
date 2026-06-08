@@ -35,14 +35,6 @@ detachButton.addEventListener("click", () => {
   if (currentUrl) window.open(toProxyUrl(currentUrl), "_blank", "noopener,noreferrer");
 });
 
-document.querySelectorAll("[data-url]").forEach((button) => {
-  button.addEventListener("click", () => {
-    const url = button.getAttribute("data-url");
-    addressInput.value = url;
-    navigate(url);
-  });
-});
-
 void refreshStatus();
 
 function navigate(input) {
