@@ -13,9 +13,11 @@ const debugDialog = document.getElementById("debugDialog");
 const debugLog = document.getElementById("debugLog");
 const copyDebugButton = document.getElementById("copyDebugButton");
 const closeDebugButton = document.getElementById("closeDebugButton");
+const proxyFrame = document.getElementById("proxyFrame");
 
 const searchTemplate = "https://www.google.com/search?q=%s";
 let currentUrl = "";
+let pendingFrameUrl = "";
 const debugEntries = [];
 
 installDebugConsole();
@@ -27,18 +29,36 @@ form.addEventListener("submit", (event) => {
 
 homeButton.addEventListener("click", () => {
   currentUrl = "";
+  pendingFrameUrl = "";
   addressInput.value = "";
   emptyState.hidden = false;
+  proxyFrame.hidden = true;
+  proxyFrame.src = "about:blank";
   addressInput.focus();
   void refreshStatus();
 });
 
 reloadButton.addEventListener("click", () => {
-  window.location.reload();
+  if (currentUrl) loadFrame(currentUrl);
 });
 
 detachButton.addEventListener("click", () => {
   if (currentUrl) window.open(toProxyUrl(currentUrl), "_blank", "noopener,noreferrer");
+});
+
+window.addEventListener("message", (event) => {
+  if (event.origin !== window.location.origin || !event.data || event.data.source !== "proxyv") return;
+
+  if (event.data.type === "navigate" && event.data.url) {
+    navigate(event.data.url);
+    return;
+  }
+
+  if (event.data.type === "loaded" && event.data.url) {
+    currentUrl = event.data.url;
+    addressInput.value = event.data.url;
+    connectionLabel.textContent = new URL(event.data.url).hostname;
+  }
 });
 
 void refreshStatus();
@@ -52,7 +72,17 @@ function navigate(input) {
   emptyState.hidden = true;
   connectionLabel.textContent = new URL(url).hostname;
   addDebugEntry("info", `navigating to ${url}`);
-  window.location.href = toProxyUrl(url);
+  loadFrame(url);
+}
+
+function loadFrame(url) {
+  pendingFrameUrl = toProxyUrl(url);
+  proxyFrame.hidden = false;
+  emptyState.hidden = true;
+  proxyFrame.src = "about:blank";
+  requestAnimationFrame(() => {
+    if (pendingFrameUrl) proxyFrame.src = pendingFrameUrl;
+  });
 }
 
 function normalizeAddress(input) {

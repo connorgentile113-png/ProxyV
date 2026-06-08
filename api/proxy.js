@@ -263,6 +263,7 @@ function clientRuntime(baseUrl) {
   return `
 <script>
 (() => {
+  const proxyvBaseUrl = ${JSON.stringify(baseUrl)};
   const debugEntries = [];
   const format = (value) => {
     if (value instanceof Error) return value.stack || value.message;
@@ -288,14 +289,28 @@ function clientRuntime(baseUrl) {
   window.addEventListener("error", (event) => addDebug("error", event.message + " at " + event.filename + ":" + event.lineno + ":" + event.colno));
   window.addEventListener("unhandledrejection", (event) => addDebug("error", "Unhandled rejection: " + format(event.reason)));
   const encodeTarget = (value) => btoa(unescape(encodeURIComponent(value))).replace(/\\+/g, "-").replace(/\\//g, "_").replace(/=+$/g, "");
-  const proxy = (value) => {
+  const normalize = (value) => {
     try {
-      const url = new URL(value, ${JSON.stringify(baseUrl)});
-      if (url.protocol !== "http:" && url.protocol !== "https:") return value;
-      return "/api/proxy?u=" + encodeURIComponent(encodeTarget(url.href));
+      const url = new URL(value, proxyvBaseUrl);
+      if (url.protocol !== "http:" && url.protocol !== "https:") return "";
+      return url.href;
     } catch {
-      return value;
+      return "";
     }
+  };
+  const proxy = (value) => {
+    const url = normalize(value);
+    return url ? "/api/proxy?u=" + encodeURIComponent(encodeTarget(url)) : value;
+  };
+  const reportLoaded = () => {
+    try { window.parent.postMessage({ source: "proxyv", type: "loaded", url: proxyvBaseUrl }, window.location.origin); } catch {}
+  };
+  const requestNavigation = (value) => {
+    const url = normalize(value);
+    if (!url) return false;
+    try { window.parent.postMessage({ source: "proxyv", type: "navigate", url }, window.location.origin); } catch {}
+    window.location.href = proxy(url);
+    return true;
   };
   const originalFetch = window.fetch;
   window.fetch = (input, init) => {
@@ -307,11 +322,70 @@ function clientRuntime(baseUrl) {
   XMLHttpRequest.prototype.open = function(method, url, ...rest) {
     return originalOpen.call(this, method, proxy(url), ...rest);
   };
+  const originalWorker = window.Worker;
+  if (originalWorker) {
+    window.Worker = function(url, options) {
+      return new originalWorker(proxy(url), options);
+    };
+  }
+  const originalSharedWorker = window.SharedWorker;
+  if (originalSharedWorker) {
+    window.SharedWorker = function(url, options) {
+      return new originalSharedWorker(proxy(url), options);
+    };
+  }
+  const rewriteElementUrl = (element, attr) => {
+    const value = element.getAttribute(attr);
+    if (value) element.setAttribute(attr, proxy(value));
+  };
+  const rewriteTree = (root) => {
+    if (!root.querySelectorAll) return;
+    root.querySelectorAll("[src],[href],[action],[poster],[data],[formaction]").forEach((element) => {
+      for (const attr of ["src", "href", "action", "poster", "data", "formaction"]) rewriteElementUrl(element, attr);
+    });
+    root.querySelectorAll("[srcset]").forEach((element) => {
+      element.srcset = element.srcset.split(",").map((candidate) => {
+        const parts = candidate.trim().split(/\\s+/);
+        if (parts[0]) parts[0] = proxy(parts[0]);
+        return parts.join(" ");
+      }).join(", ");
+    });
+  };
+  document.addEventListener("click", (event) => {
+    const link = event.target && event.target.closest ? event.target.closest("a[href],area[href]") : null;
+    if (!link || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const target = (link.getAttribute("target") || "").toLowerCase();
+    if (target && target !== "_self") return;
+    event.preventDefault();
+    requestNavigation(link.getAttribute("href") || link.href);
+  }, true);
   document.addEventListener("submit", (event) => {
     const form = event.target;
     if (!(form instanceof HTMLFormElement)) return;
-    form.action = proxy(form.action || location.href);
+    form.action = proxy(form.getAttribute("action") || location.href);
   }, true);
+  const originalPushState = history.pushState;
+  history.pushState = function(state, title, url) {
+    if (url && requestNavigation(url)) return;
+    return originalPushState.apply(this, arguments);
+  };
+  const originalReplaceState = history.replaceState;
+  history.replaceState = function(state, title, url) {
+    if (url && requestNavigation(url)) return;
+    return originalReplaceState.apply(this, arguments);
+  };
+  new MutationObserver((mutations) => {
+    for (const mutation of mutations) {
+      for (const node of mutation.addedNodes) {
+        if (node.nodeType === Node.ELEMENT_NODE) {
+          rewriteTree(node);
+          if (node.matches && node.matches("[src],[href],[action],[poster],[data],[formaction]")) {
+            for (const attr of ["src", "href", "action", "poster", "data", "formaction"]) rewriteElementUrl(node, attr);
+          }
+        }
+      }
+    }
+  }).observe(document.documentElement, { childList: true, subtree: true });
   const button = document.createElement("button");
   button.type = "button";
   button.textContent = "Debug";
@@ -332,7 +406,11 @@ function clientRuntime(baseUrl) {
     }
     renderDebug(panel.querySelector("#proxyv-debug-log"));
   });
-  document.addEventListener("DOMContentLoaded", () => document.documentElement.appendChild(button), { once: true });
+  document.addEventListener("DOMContentLoaded", () => {
+    rewriteTree(document);
+    document.documentElement.appendChild(button);
+    reportLoaded();
+  }, { once: true });
   addDebug("info", "ProxyV runtime loaded at " + location.href);
 })();
 </script>`;

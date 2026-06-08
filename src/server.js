@@ -37,6 +37,8 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  if (await proxyImplicitRequest(request, response)) return;
+
   serveStatic(request, response);
 });
 
@@ -83,6 +85,66 @@ function serveStatic(request, response) {
 
   response.setHeader("Content-Type", mimeTypes[extname(filePath)] || "application/octet-stream");
   createReadStream(filePath).pipe(response);
+}
+
+async function proxyImplicitRequest(request, response) {
+  const target = inferTargetFromProxiedReferer(request);
+  if (!target) return false;
+
+  request.url = `/api/proxy?u=${encodeURIComponent(toBase64Url(target))}`;
+  await proxyHandler(request, response);
+  return true;
+}
+
+function inferTargetFromProxiedReferer(request) {
+  if (!request.url || request.url.startsWith("/api/")) return "";
+
+  const requested = new URL(request.url, getRequestOrigin(request) || "http://localhost");
+  if (requested.pathname === "/" || existingPublicFile(requested.pathname)) return "";
+
+  const referer = request.headers.referer || request.headers.referrer;
+  if (!referer) return "";
+
+  let refererUrl;
+  try {
+    refererUrl = new URL(referer, getRequestOrigin(request) || "http://localhost");
+  } catch {
+    return "";
+  }
+
+  if (refererUrl.pathname !== "/api/proxy") return "";
+
+  const baseTarget = getProxyTarget(refererUrl);
+  if (!baseTarget) return "";
+
+  try {
+    return new URL(request.url, baseTarget).href;
+  } catch {
+    return "";
+  }
+}
+
+function existingPublicFile(pathname) {
+  const safePath = normalize(pathname).replace(/^(\.\.[/\\])+/, "");
+  const filePath = join(publicDir, safePath);
+  return filePath.startsWith(publicDir) && existsSync(filePath) && !statSync(filePath).isDirectory();
+}
+
+function getProxyTarget(proxyUrl) {
+  const encoded = proxyUrl.searchParams.get("u");
+  if (encoded) {
+    try {
+      return Buffer.from(encoded, "base64url").toString("utf8");
+    } catch {
+      return "";
+    }
+  }
+
+  return proxyUrl.searchParams.get("url") || "";
+}
+
+function toBase64Url(value) {
+  return Buffer.from(value, "utf8").toString("base64url");
 }
 
 function sendJson(response, data) {
