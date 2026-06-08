@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "private": true,
   "description": "A Vercel-compatible serverless web proxy.",
-  "type": "module",
   "scripts": {
     "build": "node scripts/build-static.js",
     "start": "node src/server.js"

@@ -1,11 +1,10 @@
-import { createReadStream, existsSync, statSync } from "node:fs";
-import { createServer } from "node:http";
-import { extname, join, normalize } from "node:path";
-import { fileURLToPath } from "node:url";
+const { createReadStream, existsSync, statSync } = require("node:fs");
+const { createServer } = require("node:http");
+const { extname, join, normalize } = require("node:path");
 
-import proxyHandler from "../api/proxy.js";
+const proxyHandler = require("../api/proxy.js");
 
-const root = fileURLToPath(new URL("../", import.meta.url));
+const root = join(__dirname, "..");
 const publicDir = join(root, "public");
 const port = Number.parseInt(process.env.PORT || "8080", 10);
 const host = process.env.HOST || "127.0.0.1";
@@ -21,7 +20,7 @@ const mimeTypes = {
 };
 
 const server = createServer(async (request, response) => {
-  if (request.url?.startsWith("/api/proxy")) {
+  if (request.url && request.url.startsWith("/api/proxy")) {
     await proxyHandler(request, response);
     return;
   }
