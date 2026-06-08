@@ -1,13 +1,16 @@
 const { createReadStream, existsSync, statSync } = require("node:fs");
 const { createServer } = require("node:http");
 const { extname, join, normalize } = require("node:path");
+const ngrok = require("@ngrok/ngrok");
 
 const proxyHandler = require("../api/proxy.js");
 
 const root = join(__dirname, "..");
 const publicDir = join(root, "public");
 const port = Number.parseInt(process.env.PORT || "8080", 10);
-const host = process.env.HOST || "127.0.0.1";
+const host = process.env.HOST || "0.0.0.0";
+let ngrokListener = null;
+let ngrokUrl = "";
 
 const mimeTypes = {
   ".css": "text/css; charset=utf-8",
@@ -26,16 +29,47 @@ const server = createServer(async (request, response) => {
   }
 
   if (request.url === "/api/status") {
-    sendJson(response, { mode: "Serverless reverse proxy" });
+    sendJson(response, {
+      mode: ngrokUrl ? "ngrok tunnel online" : "Waiting for ngrok tunnel",
+      ngrokUrl,
+      publicUrl: getRequestOrigin(request)
+    });
     return;
   }
 
   serveStatic(request, response);
 });
 
-server.listen(port, host, () => {
-  console.log(`ProxyV is listening at http://${host}:${port}`);
+server.listen(port, host, async () => {
+  console.log(`ProxyV is listening on ${host}:${port}`);
+  await startNgrok();
 });
+
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
+
+async function startNgrok() {
+  if (!process.env.NGROK_AUTHTOKEN) {
+    console.warn("NGROK_AUTHTOKEN is not set; no ngrok URL will be generated.");
+    return;
+  }
+
+  try {
+    const options = {
+      addr: `http://127.0.0.1:${port}`,
+      authtoken: process.env.NGROK_AUTHTOKEN,
+      schemes: ["HTTPS"]
+    };
+
+    if (process.env.NGROK_DOMAIN) options.domain = process.env.NGROK_DOMAIN;
+
+    ngrokListener = await ngrok.forward(options);
+    ngrokUrl = ngrokListener.url();
+    console.log(`ngrok URL: ${ngrokUrl}`);
+  } catch (error) {
+    console.error(`ngrok failed to start: ${error.message}`);
+  }
+}
 
 function serveStatic(request, response) {
   const url = new URL(request.url || "/", `http://${request.headers.host}`);
@@ -54,4 +88,20 @@ function serveStatic(request, response) {
 function sendJson(response, data) {
   response.setHeader("Content-Type", "application/json; charset=utf-8");
   response.end(JSON.stringify(data));
+}
+
+function getRequestOrigin(request) {
+  const proto = request.headers["x-forwarded-proto"] || "http";
+  const hostHeader = request.headers["x-forwarded-host"] || request.headers.host;
+  return hostHeader ? `${proto}://${hostHeader}` : "";
+}
+
+async function shutdown() {
+  try {
+    if (ngrokListener) await ngrokListener.close();
+  } catch (error) {
+    console.error(`ngrok shutdown error: ${error.message}`);
+  }
+
+  server.close(() => process.exit(0));
 }

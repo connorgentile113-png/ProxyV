@@ -60,7 +60,7 @@ button:disabled {
 
 .toolbar {
   display: grid;
-  grid-template-columns: minmax(180px, 260px) minmax(260px, 1fr) auto;
+  grid-template-columns: minmax(180px, 240px) minmax(180px, 320px) minmax(260px, 1fr) auto;
   align-items: center;
   gap: 14px;
   padding: 14px;
@@ -104,6 +104,33 @@ h1 {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.tunnel-url {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.tunnel-url span {
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.tunnel-url a {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--accent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.82rem;
+  text-decoration: none;
+}
+
+.tunnel-url a:hover {
+  text-decoration: underline;
 }
 
 .address-form {
@@ -205,9 +232,14 @@ h1 {
     grid-template-columns: 1fr auto;
   }
 
-  .address-form {
+  .tunnel-url {
     grid-column: 1 / -1;
     grid-row: 2;
+  }
+
+  .address-form {
+    grid-column: 1 / -1;
+    grid-row: 3;
   }
 }
 

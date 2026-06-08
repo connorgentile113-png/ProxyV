@@ -8,6 +8,7 @@ const frameMount = document.getElementById("frameMount");
 const homeButton = document.getElementById("homeButton");
 const reloadButton = document.getElementById("reloadButton");
 const detachButton = document.getElementById("detachButton");
+const ngrokUrl = document.getElementById("ngrokUrl");
 
 const searchTemplate = "https://www.google.com/search?q=%s";
 let currentUrl = "";
@@ -22,8 +23,8 @@ homeButton.addEventListener("click", () => {
   addressInput.value = "";
   frameMount.replaceChildren();
   emptyState.hidden = false;
-  connectionLabel.textContent = "Serverless proxy ready";
   addressInput.focus();
+  void refreshStatus();
 });
 
 reloadButton.addEventListener("click", () => {
@@ -84,8 +85,19 @@ async function refreshStatus() {
   try {
     const response = await fetch("/api/status");
     const status = await response.json();
-    connectionLabel.textContent = status.mode || "Serverless proxy ready";
+    connectionLabel.textContent = status.mode || "Proxy ready";
+    if (status.ngrokUrl) {
+      ngrokUrl.textContent = status.ngrokUrl;
+      ngrokUrl.href = status.ngrokUrl;
+    } else {
+      ngrokUrl.textContent = "Starting...";
+      ngrokUrl.removeAttribute("href");
+    }
   } catch {
-    connectionLabel.textContent = "Serverless proxy ready";
+    connectionLabel.textContent = "Status unavailable";
+    ngrokUrl.textContent = "Unavailable";
+    ngrokUrl.removeAttribute("href");
   }
 }
+
+setInterval(refreshStatus, 5000);
