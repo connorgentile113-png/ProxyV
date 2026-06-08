@@ -23,6 +23,19 @@ const textTypes = [
 ];
 
 export default async function handler(request, response) {
+  try {
+    await handleProxy(request, response);
+  } catch (error) {
+    console.error("Unhandled proxy error:", error);
+    if (!response.headersSent) {
+      sendText(response, 500, `Proxy function crashed: ${error.message}`);
+    } else {
+      response.end();
+    }
+  }
+}
+
+async function handleProxy(request, response) {
   const requestUrl = new URL(request.url || "/", getOrigin(request));
   const target = requestUrl.searchParams.get("url");
 
@@ -45,12 +58,19 @@ export default async function handler(request, response) {
   }
 
   try {
-    const upstream = await fetch(targetUrl, {
-      method: request.method,
+    const init = {
+      method: request.method || "GET",
       headers: buildUpstreamHeaders(request, targetUrl),
-      body: hasBody(request) ? request : undefined,
-      redirect: "manual",
-      duplex: hasBody(request) ? "half" : undefined
+      redirect: "manual"
+    };
+
+    if (hasBody(request)) {
+      init.body = await readRequestBody(request);
+      init.duplex = "half";
+    }
+
+    const upstream = await fetch(targetUrl, {
+      ...init
     });
 
     await sendUpstreamResponse(request, response, upstream, targetUrl);
@@ -67,7 +87,7 @@ async function sendUpstreamResponse(request, response, upstream, targetUrl) {
   response.statusCode = upstream.status;
 
   if (location && isRedirect(upstream.status)) {
-    response.setHeader("location", toProxyUrl(new URL(location, targetUrl).href, request));
+    setResponseHeader(response, "location", toProxyUrl(new URL(location, targetUrl).href, request));
   }
 
   for (const [name, value] of headers.entries()) {
@@ -75,22 +95,23 @@ async function sendUpstreamResponse(request, response, upstream, targetUrl) {
     if (hopByHopHeaders.has(lower) || lower === "location" || lower === "set-cookie") continue;
     if (lower === "content-security-policy" || lower === "content-security-policy-report-only") continue;
     if (lower === "x-frame-options") continue;
-    response.setHeader(name, value);
+    setResponseHeader(response, name, value);
   }
 
   const setCookie = headers.getSetCookie?.() || splitSetCookie(headers.get("set-cookie"));
   if (setCookie.length) {
-    response.setHeader("set-cookie", setCookie.map((cookie) => rewriteCookie(cookie)));
+    setResponseHeader(response, "set-cookie", setCookie.map((cookie) => rewriteCookie(cookie)));
   }
 
-  response.setHeader("access-control-allow-origin", "*");
-  response.setHeader("x-proxyv-url", targetUrl.href);
+  setResponseHeader(response, "access-control-allow-origin", "*");
+  setResponseHeader(response, "x-proxyv-url", targetUrl.href);
 
   if (!shouldRewrite(contentType, request.method)) {
     if (upstream.body) {
       response.statusCode = upstream.status;
-      response.setHeader("cache-control", headers.get("cache-control") || "public, max-age=300");
-      await pipeWebStream(upstream.body, response);
+      setResponseHeader(response, "cache-control", headers.get("cache-control") || "public, max-age=300");
+      const buffer = Buffer.from(await upstream.arrayBuffer());
+      response.end(buffer);
     } else {
       response.end();
     }
@@ -99,8 +120,8 @@ async function sendUpstreamResponse(request, response, upstream, targetUrl) {
 
   let body = await upstream.text();
   body = rewriteText(body, contentType, targetUrl, request);
-  response.removeHeader("content-length");
-  response.setHeader("content-type", normalizeTextContentType(contentType));
+  if (typeof response.removeHeader === "function") response.removeHeader("content-length");
+  setResponseHeader(response, "content-type", normalizeTextContentType(contentType));
   response.end(body);
 }
 
@@ -123,7 +144,6 @@ function buildUpstreamHeaders(request, targetUrl) {
     else if (value) headers.set(name, value);
   }
 
-  headers.set("host", targetUrl.host);
   headers.set("accept-encoding", "identity");
   if (!headers.has("user-agent")) {
     headers.set(
@@ -294,9 +314,16 @@ function isRedirect(status) {
 }
 
 function getOrigin(request) {
-  const proto = request.headers["x-forwarded-proto"] || "http";
-  const host = request.headers["x-forwarded-host"] || request.headers.host || "localhost";
+  const requestHeaders = request.headers || {};
+  const proto = getHeader(requestHeaders, "x-forwarded-proto") || "http";
+  const host = getHeader(requestHeaders, "x-forwarded-host") || getHeader(requestHeaders, "host") || "localhost";
   return `${proto}://${host}`;
+}
+
+function getHeader(headers, name) {
+  const value = headers[name] || headers[name.toLowerCase()];
+  if (Array.isArray(value)) return value[0];
+  return value;
 }
 
 function rewriteCookie(cookie) {
@@ -317,19 +344,24 @@ function escapeAttribute(value) {
 
 function sendText(response, status, message) {
   response.statusCode = status;
-  response.setHeader("content-type", "text/plain; charset=utf-8");
+  setResponseHeader(response, "content-type", "text/plain; charset=utf-8");
   response.end(message);
 }
 
-async function pipeWebStream(stream, response) {
-  const reader = stream.getReader();
+function setResponseHeader(response, name, value) {
   try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      response.write(Buffer.from(value));
-    }
-  } finally {
-    response.end();
+    if (value !== undefined && value !== null) response.setHeader(name, value);
+  } catch {
+    // Some upstream headers are invalid for Node/Vercel responses. Drop them.
   }
+}
+
+async function readRequestBody(request) {
+  const chunks = [];
+
+  for await (const chunk of request) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+
+  return Buffer.concat(chunks);
 }
