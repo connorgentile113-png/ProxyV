@@ -11,6 +11,9 @@ const port = Number.parseInt(process.env.PORT || "8080", 10);
 const host = process.env.HOST || "0.0.0.0";
 let ngrokListener = null;
 let ngrokUrl = "";
+let ngrokState = "not started";
+let ngrokError = "";
+let ngrokAttempts = 0;
 
 const mimeTypes = {
   ".css": "text/css; charset=utf-8",
@@ -30,8 +33,10 @@ const server = createServer(async (request, response) => {
 
   if (request.url === "/api/status") {
     sendJson(response, {
-      mode: ngrokUrl ? "ngrok tunnel online" : "Waiting for ngrok tunnel",
+      mode: ngrokUrl ? "ngrok tunnel online" : `ngrok ${ngrokState}`,
       ngrokUrl,
+      ngrokError,
+      ngrokAttempts,
       publicUrl: getRequestOrigin(request)
     });
     return;
@@ -44,7 +49,7 @@ const server = createServer(async (request, response) => {
 
 server.listen(port, host, async () => {
   console.log(`ProxyV is listening on ${host}:${port}`);
-  await startNgrok();
+  startNgrok();
 });
 
 process.on("SIGINT", shutdown);
@@ -52,25 +57,53 @@ process.on("SIGTERM", shutdown);
 
 async function startNgrok() {
   if (!process.env.NGROK_AUTHTOKEN) {
+    ngrokState = "disabled";
+    ngrokError = "NGROK_AUTHTOKEN is not set.";
     console.warn("NGROK_AUTHTOKEN is not set; no ngrok URL will be generated.");
     return;
   }
 
+  ngrokAttempts += 1;
+  ngrokState = "starting";
+  ngrokError = "";
+  const addr = `localhost:${port}`;
+  console.log(`Starting ngrok tunnel to ${addr} (attempt ${ngrokAttempts}).`);
+
   try {
     const options = {
-      addr: `http://127.0.0.1:${port}`,
-      authtoken: process.env.NGROK_AUTHTOKEN,
+      addr,
+      authtoken_from_env: true,
+      proto: "http",
       schemes: ["HTTPS"]
     };
 
     if (process.env.NGROK_DOMAIN) options.domain = process.env.NGROK_DOMAIN;
 
-    ngrokListener = await ngrok.forward(options);
+    ngrokListener = await withTimeout(
+      ngrok.forward(options),
+      Number.parseInt(process.env.NGROK_START_TIMEOUT_MS || "30000", 10),
+      "ngrok startup timed out"
+    );
     ngrokUrl = ngrokListener.url();
+    ngrokState = "online";
     console.log(`ngrok URL: ${ngrokUrl}`);
   } catch (error) {
-    console.error(`ngrok failed to start: ${error.message}`);
+    ngrokState = "failed";
+    ngrokError = error && error.message ? error.message : String(error);
+    console.error(`ngrok failed to start: ${ngrokError}`);
+
+    const retryDelay = Number.parseInt(process.env.NGROK_RETRY_DELAY_MS || "15000", 10);
+    setTimeout(startNgrok, retryDelay).unref();
   }
+}
+
+function withTimeout(promise, timeoutMs, message) {
+  let timeout;
+  const timeoutPromise = new Promise((resolve, reject) => {
+    timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeout));
 }
 
 function serveStatic(request, response) {
