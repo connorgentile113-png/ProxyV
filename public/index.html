@@ -40,6 +40,7 @@
           <button id="homeButton" type="button" title="Home" aria-label="Home">⌂</button>
           <button id="reloadButton" type="button" title="Reload" aria-label="Reload">↻</button>
           <button id="detachButton" type="button" title="Open in tab" aria-label="Open in tab">↗</button>
+          <button id="debugButton" type="button" title="Debug" aria-label="Debug">⌘</button>
         </div>
       </section>
 
@@ -50,5 +51,16 @@
         </div>
       </section>
     </main>
+
+    <dialog id="debugDialog" class="debug-dialog">
+      <div class="debug-header">
+        <strong>Browser console</strong>
+        <div>
+          <button id="copyDebugButton" type="button">Copy</button>
+          <button id="closeDebugButton" type="button">Close</button>
+        </div>
+      </div>
+      <pre id="debugLog" class="debug-log"></pre>
+    </dialog>
   </body>
 </html>

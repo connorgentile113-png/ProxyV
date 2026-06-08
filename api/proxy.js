@@ -41,10 +41,10 @@ module.exports = async function handler(request, response) {
 
 async function handleProxy(request, response) {
   const requestUrl = new URL(request.url || "/", getOrigin(request));
-  const target = requestUrl.searchParams.get("url");
+  const target = getTargetUrl(requestUrl);
 
   if (!target) {
-    sendText(response, 400, "Missing url parameter.");
+    sendText(response, 400, "Missing target parameter.");
     return;
   }
 
@@ -263,11 +263,36 @@ function clientRuntime(baseUrl) {
   return `
 <script>
 (() => {
+  const debugEntries = [];
+  const format = (value) => {
+    if (value instanceof Error) return value.stack || value.message;
+    if (typeof value === "string") return value;
+    try { return JSON.stringify(value); } catch { return String(value); }
+  };
+  const addDebug = (level, message) => {
+    debugEntries.push({ time: new Date().toISOString(), level, message });
+    if (debugEntries.length > 300) debugEntries.shift();
+    const log = document.getElementById("proxyv-debug-log");
+    if (log) renderDebug(log);
+  };
+  const renderDebug = (log) => {
+    log.textContent = debugEntries.map((entry) => "[" + entry.time + "] " + entry.level.toUpperCase() + " " + entry.message).join("\\n");
+  };
+  for (const level of ["log", "info", "warn", "error"]) {
+    const original = console[level].bind(console);
+    console[level] = (...args) => {
+      addDebug(level, args.map(format).join(" "));
+      original(...args);
+    };
+  }
+  window.addEventListener("error", (event) => addDebug("error", event.message + " at " + event.filename + ":" + event.lineno + ":" + event.colno));
+  window.addEventListener("unhandledrejection", (event) => addDebug("error", "Unhandled rejection: " + format(event.reason)));
+  const encodeTarget = (value) => btoa(unescape(encodeURIComponent(value))).replace(/\\+/g, "-").replace(/\\//g, "_").replace(/=+$/g, "");
   const proxy = (value) => {
     try {
       const url = new URL(value, ${JSON.stringify(baseUrl)});
       if (url.protocol !== "http:" && url.protocol !== "https:") return value;
-      return "/api/proxy?url=" + encodeURIComponent(url.href);
+      return "/api/proxy?u=" + encodeURIComponent(encodeTarget(url.href));
     } catch {
       return value;
     }
@@ -287,6 +312,28 @@ function clientRuntime(baseUrl) {
     if (!(form instanceof HTMLFormElement)) return;
     form.action = proxy(form.action || location.href);
   }, true);
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = "Debug";
+  button.style.cssText = "position:fixed;right:10px;bottom:10px;z-index:2147483647;background:#151a21;color:#edf2f7;border:1px solid #38bdf8;border-radius:7px;padding:8px 10px;font:13px system-ui;cursor:pointer";
+  button.addEventListener("click", async () => {
+    let panel = document.getElementById("proxyv-debug-panel");
+    if (!panel) {
+      panel = document.createElement("div");
+      panel.id = "proxyv-debug-panel";
+      panel.style.cssText = "position:fixed;right:10px;bottom:54px;width:min(720px,calc(100vw - 20px));height:min(460px,calc(100vh - 74px));z-index:2147483647;background:#070b10;color:#d9e6f2;border:1px solid #2c3440;border-radius:7px;box-shadow:0 12px 36px rgba(0,0,0,.45);font:12px ui-monospace,SFMono-Regular,Menlo,monospace;display:grid;grid-template-rows:auto 1fr";
+      panel.innerHTML = '<div style="display:flex;justify-content:space-between;gap:8px;padding:8px;border-bottom:1px solid #2c3440"><strong>Browser console</strong><span><button id="proxyv-debug-copy" type="button">Copy</button> <button id="proxyv-debug-close" type="button">Close</button></span></div><pre id="proxyv-debug-log" style="margin:0;padding:10px;overflow:auto;white-space:pre-wrap;word-break:break-word"></pre>';
+      document.documentElement.appendChild(panel);
+      panel.querySelector("#proxyv-debug-close").addEventListener("click", () => panel.remove());
+      panel.querySelector("#proxyv-debug-copy").addEventListener("click", async () => {
+        const log = document.getElementById("proxyv-debug-log");
+        await navigator.clipboard.writeText(log ? log.textContent : "");
+      });
+    }
+    renderDebug(panel.querySelector("#proxyv-debug-log"));
+  });
+  document.addEventListener("DOMContentLoaded", () => document.documentElement.appendChild(button), { once: true });
+  addDebug("info", "ProxyV runtime loaded at " + location.href);
 })();
 </script>`;
 }
@@ -322,7 +369,25 @@ function rewriteRefresh(content, baseUrl) {
 }
 
 function toProxyUrl(url) {
-  return `/api/proxy?url=${encodeURIComponent(url)}`;
+  return `/api/proxy?u=${encodeURIComponent(toBase64Url(url))}`;
+}
+
+function getTargetUrl(requestUrl) {
+  const encoded = requestUrl.searchParams.get("u");
+  if (encoded) return fromBase64Url(encoded);
+  return requestUrl.searchParams.get("url");
+}
+
+function toBase64Url(value) {
+  return Buffer.from(value, "utf8").toString("base64url");
+}
+
+function fromBase64Url(value) {
+  try {
+    return Buffer.from(value, "base64url").toString("utf8");
+  } catch {
+    return "";
+  }
 }
 
 function shouldRewrite(contentType, method = "GET") {
