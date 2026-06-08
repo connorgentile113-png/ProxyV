@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ProxyV</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="toolbar" aria-label="Proxy controls">
+        <div class="brand">
+          <span class="mark" aria-hidden="true">PV</span>
+          <div>
+            <h1>ProxyV</h1>
+            <p id="connectionLabel">Serverless proxy ready</p>
+          </div>
+        </div>
+
+        <form id="proxyForm" class="address-form">
+          <label class="sr-only" for="addressInput">Address or search</label>
+          <input
+            id="addressInput"
+            name="address"
+            type="text"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="Enter a URL or search"
+          />
+          <button type="submit" aria-label="Open address">Go</button>
+        </form>
+
+        <div class="actions" aria-label="Browser actions">
+          <button id="homeButton" type="button" title="Home" aria-label="Home">⌂</button>
+          <button id="reloadButton" type="button" title="Reload" aria-label="Reload">↻</button>
+          <button id="detachButton" type="button" title="Open in tab" aria-label="Open in tab">↗</button>
+        </div>
+      </section>
+
+      <section class="stage" aria-label="Proxied browser">
+        <div id="emptyState" class="empty-state">
+          <h2>Start browsing</h2>
+          <p>Enter a site above to open it through ProxyV.</p>
+          <div class="quick-links" aria-label="Quick links">
+            <button type="button" data-url="https://example.com">Example</button>
+            <button type="button" data-url="https://wikipedia.org">Wikipedia</button>
+            <button type="button" data-url="https://news.ycombinator.com">Hacker News</button>
+          </div>
+        </div>
+        <div id="frameMount" class="frame-mount"></div>
+      </section>
+    </main>
+  </body>
+</html>
