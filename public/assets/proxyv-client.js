@@ -154,8 +154,9 @@ function ensureScramjet() {
     return scramjetFrame;
   })().catch((error) => {
     scramjetReady = null;
-    addDebugEntry("error", error.message);
-    connectionLabel.textContent = "Scramjet unavailable";
+    const message = error && error.message ? error.message : "Scramjet unavailable";
+    addDebugEntry("error", message);
+    connectionLabel.textContent = message;
     throw error;
   });
 
@@ -163,15 +164,13 @@ function ensureScramjet() {
 }
 
 async function activateScramjetWorker() {
-  await navigator.serviceWorker.register("/scramjet-sw.js", { scope: "/" });
-
   if (navigator.serviceWorker.controller) return;
 
-  await new Promise((resolve, reject) => {
+  const controllerReady = new Promise((resolve, reject) => {
     const timeout = window.setTimeout(() => {
       navigator.serviceWorker.removeEventListener("controllerchange", onControllerChange);
       reject(new Error("Timed out waiting for Scramjet service worker control."));
-    }, 5000);
+    }, 10000);
 
     function onControllerChange() {
       window.clearTimeout(timeout);
@@ -180,6 +179,13 @@ async function activateScramjetWorker() {
 
     navigator.serviceWorker.addEventListener("controllerchange", onControllerChange, { once: true });
   });
+
+  await navigator.serviceWorker.register("/scramjet-sw.js", { scope: "/" });
+  await Promise.race([navigator.serviceWorker.ready, controllerReady]);
+
+  if (!navigator.serviceWorker.controller) {
+    throw new Error("Scramjet service worker registered but did not take control.");
+  }
 }
 
 function syncFrameUrl(event) {
