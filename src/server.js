@@ -1,74 +1,108 @@
-const { createReadStream, existsSync, statSync } = require("node:fs");
-const { createServer } = require("node:http");
-const { extname, join, normalize } = require("node:path");
+"use strict";
+
+const { mkdirSync } = require("node:fs");
+const { join } = require("node:path");
 const ngrok = require("@ngrok/ngrok");
-const { scramjetPath } = require("@mercuryworkshop/scramjet/path");
-const { createBareServer } = require("@nebula-services/bare-server-node");
+const addStaticDirToProxy = require("rammerhead/src/util/addStaticDirToProxy");
+const RammerheadLogging = require("rammerhead/src/classes/RammerheadLogging");
+const RammerheadProxy = require("rammerhead/src/classes/RammerheadProxy");
+const RammerheadSessionFileCache = require("rammerhead/src/classes/RammerheadSessionFileCache");
+const setupPipeline = require("rammerhead/src/server/setupPipeline");
+const setupRoutes = require("rammerhead/src/server/setupRoutes");
 
 const root = join(__dirname, "..");
 const publicDir = join(root, "public");
-const bareMuxDir = join(root, "node_modules", "@mercuryworkshop", "bare-mux", "dist");
-const bareModuleDir = join(root, "node_modules", "@mercuryworkshop", "bare-as-module3", "dist");
-const bareServer = createBareServer("/bare/", {
-  blockLocal: process.env.BARE_BLOCK_LOCAL !== "false"
-});
+const sessionDir = join(root, "sessions");
 const port = Number.parseInt(process.env.PORT || "8080", 10);
 const host = process.env.HOST || "0.0.0.0";
+
+mkdirSync(sessionDir, { recursive: true });
+mkdirSync(join(root, "node_modules", "rammerhead", "cache-js"), { recursive: true });
+
+const rammerheadConfig = require("rammerhead/src/config");
+
+rammerheadConfig.password = null;
+rammerheadConfig.restrictSessionToIP = false;
+rammerheadConfig.getIP = getRequestIp;
+rammerheadConfig.getServerInfo = getServerInfoForRequest;
+
+const logger = new RammerheadLogging({
+  logLevel: process.env.PROXYV_LOG_LEVEL || "info",
+  generatePrefix: (level) => `[${new Date().toISOString()}] [${level.toUpperCase()}] `
+});
+
+const proxyServer = new RammerheadProxy({
+  logger,
+  loggerGetIP: getRequestIp,
+  bindingAddress: host,
+  port,
+  crossDomainPort: null,
+  dontListen: false,
+  ssl: null,
+  getServerInfo: getServerInfoForRequest,
+  disableLocalStorageSync: false,
+  jsCache: undefined,
+  disableHttp2: false
+});
+
+Object.assign(proxyServer.rewriteServerHeaders, {
+  "content-security-policy": null,
+  "content-security-policy-report-only": null,
+  "cross-origin-embedder-policy": null,
+  "cross-origin-opener-policy": null,
+  "cross-origin-resource-policy": null,
+  "origin-agent-cluster": null,
+  "x-frame-options": null
+});
+
+addStaticDirToProxy(proxyServer, publicDir);
+
+const sessionStore = new RammerheadSessionFileCache({
+  logger,
+  saveDirectory: sessionDir,
+  cacheTimeout: 1000 * 60 * 20,
+  cacheCheckInterval: 1000 * 60 * 10,
+  deleteUnused: true,
+  deleteCorruptedSessions: true,
+  staleCleanupOptions: {
+    staleTimeout: 1000 * 60 * 60 * 24 * 3,
+    maxToLive: null,
+    staleCheckInterval: 1000 * 60 * 60 * 6
+  }
+});
+
+sessionStore.attachToProxy(proxyServer);
+setupPipeline(proxyServer, sessionStore);
+setupRoutes(proxyServer, sessionStore, logger);
+
+proxyServer.GET("/api/status", (req, res) => {
+  sendJson(res, {
+    mode: ngrokUrl ? "ngrok tunnel online" : `ngrok ${ngrokState}`,
+    ngrokUrl,
+    ngrokError,
+    ngrokAttempts,
+    publicUrl: getRequestOrigin(req)
+  });
+});
+
 let ngrokListener = null;
 let ngrokUrl = "";
 let ngrokState = "not started";
 let ngrokError = "";
 let ngrokAttempts = 0;
 
-const mimeTypes = {
-  ".css": "text/css; charset=utf-8",
-  ".html": "text/html; charset=utf-8",
-  ".ico": "image/x-icon",
-  ".js": "application/javascript; charset=utf-8",
-  ".mjs": "application/javascript; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".png": "image/png",
-  ".svg": "image/svg+xml",
-  ".wasm": "application/wasm"
+const onListening = () => {
+  console.log(`ProxyV is listening on ${host}:${port}`);
+  startNgrok().catch((error) => {
+    console.error(`ngrok start failed: ${error.message}`);
+  });
 };
 
-const server = createServer(async (request, response) => {
-  if (request.url === "/api/status") {
-    sendJson(response, {
-      mode: ngrokUrl ? "ngrok tunnel online" : `ngrok ${ngrokState}`,
-      ngrokUrl,
-      ngrokError,
-      ngrokAttempts,
-      publicUrl: getRequestOrigin(request)
-    });
-    return;
-  }
-
-  if (bareServer.shouldRoute(request)) {
-    await bareServer.routeRequest(request, response);
-    return;
-  }
-
-  if (serveDependencyStatic(request, response, "/scramjet/", scramjetPath)) return;
-  if (serveDependencyStatic(request, response, "/baremux/", bareMuxDir)) return;
-  if (serveDependencyStatic(request, response, "/baremod/", bareModuleDir)) return;
-
-  serveStatic(request, response);
-});
-
-server.on("upgrade", (request, socket, head) => {
-  if (bareServer.shouldRoute(request)) {
-    void bareServer.routeUpgrade(request, socket, head);
-    return;
-  }
-
-  socket.destroy();
-});
-
-server.listen(port, host, async () => {
-  console.log(`ProxyV is listening on ${host}:${port}`);
-  startNgrok();
-});
+if (proxyServer.server1.listening) {
+  onListening();
+} else {
+  proxyServer.server1.once("listening", onListening);
+}
 
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
@@ -111,51 +145,19 @@ async function startNgrok() {
     console.error(`ngrok failed to start: ${ngrokError}`);
 
     const retryDelay = Number.parseInt(process.env.NGROK_RETRY_DELAY_MS || "15000", 10);
-    setTimeout(startNgrok, retryDelay).unref();
+    setTimeout(() => {
+      void startNgrok();
+    }, retryDelay).unref();
   }
 }
 
 function withTimeout(promise, timeoutMs, message) {
   let timeout;
-  const timeoutPromise = new Promise((resolve, reject) => {
+  const timeoutPromise = new Promise((_, reject) => {
     timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
   });
 
   return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeout));
-}
-
-function serveStatic(request, response) {
-  const url = new URL(request.url || "/", `http://${request.headers.host}`);
-  const pathname = url.pathname === "/" ? "/index.html" : url.pathname;
-  const safePath = normalize(pathname).replace(/^(\.\.[/\\])+/, "");
-  let filePath = join(publicDir, safePath);
-
-  if (!filePath.startsWith(publicDir) || !existsSync(filePath) || statSync(filePath).isDirectory()) {
-    filePath = join(publicDir, "index.html");
-  }
-
-  response.setHeader("Content-Type", mimeTypes[extname(filePath)] || "application/octet-stream");
-  createReadStream(filePath).pipe(response);
-}
-
-function serveDependencyStatic(request, response, prefix, directory) {
-  const url = new URL(request.url || "/", `http://${request.headers.host}`);
-  if (!url.pathname.startsWith(prefix)) return false;
-
-  const relativePath = url.pathname.slice(prefix.length) || "index.js";
-  const safePath = normalize(relativePath).replace(/^(\.\.[/\\])+/, "");
-  const filePath = join(directory, safePath);
-
-  if (!filePath.startsWith(directory) || !existsSync(filePath) || statSync(filePath).isDirectory()) {
-    response.statusCode = 404;
-    response.end("Not found");
-    return true;
-  }
-
-  response.setHeader("Content-Type", mimeTypes[extname(filePath)] || "application/octet-stream");
-  response.setHeader("Cache-Control", "public, max-age=3600");
-  createReadStream(filePath).pipe(response);
-  return true;
 }
 
 function sendJson(response, data) {
@@ -169,6 +171,25 @@ function getRequestOrigin(request) {
   return hostHeader ? `${proto}://${hostHeader}` : "";
 }
 
+function getRequestIp(request) {
+  const forwardedFor = request.headers["x-forwarded-for"];
+  if (forwardedFor) return String(forwardedFor).split(",")[0].trim();
+  return request.socket.remoteAddress || "";
+}
+
+function getServerInfoForRequest(request) {
+  const origin = getRequestOrigin(request) || `http://${request.headers.host || `localhost:${port}`}`;
+  const parsed = new URL(origin);
+  const currentPort = Number(parsed.port || (parsed.protocol === "https:" ? "443" : "80"));
+
+  return {
+    hostname: parsed.hostname,
+    port: currentPort || port,
+    crossDomainPort: currentPort || port,
+    protocol: parsed.protocol
+  };
+}
+
 async function shutdown() {
   try {
     if (ngrokListener) await ngrokListener.close();
@@ -176,5 +197,11 @@ async function shutdown() {
     console.error(`ngrok shutdown error: ${error.message}`);
   }
 
-  server.close(() => process.exit(0));
+  try {
+    proxyServer.close();
+  } catch (error) {
+    console.error(`proxy shutdown error: ${error.message}`);
+  }
+
+  process.exit(0);
 }

@@ -2,7 +2,7 @@
   "name": "proxyv-koyeb-ngrok",
   "version": "1.0.0",
   "private": true,
-  "description": "A persistent Koyeb web proxy that publishes an ngrok URL.",
+  "description": "A persistent Rammerhead web proxy that publishes an ngrok URL.",
   "scripts": {
     "build": "node scripts/build-static.js",
     "start": "node src/server.js"
@@ -11,10 +11,7 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@mercuryworkshop/bare-as-module3": "^2.2.5",
-    "@mercuryworkshop/bare-mux": "^2.1.9",
-    "@mercuryworkshop/scramjet": "^1.1.0",
-    "@nebula-services/bare-server-node": "^2.0.4",
-    "@ngrok/ngrok": "^1.5.0"
+    "@ngrok/ngrok": "^1.5.0",
+    "rammerhead": "^1.2.64"
   }
 }

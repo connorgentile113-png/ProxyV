@@ -1,6 +1,6 @@
 # ProxyV
 
-ProxyV is a persistent Scramjet-based web proxy for Koyeb that starts an ngrok tunnel on boot. The Koyeb URL shows the generated ngrok URL, and the ngrok URL serves the same proxy UI, Scramjet service worker assets, and Bare transport endpoint.
+ProxyV is a persistent Rammerhead-based web proxy for Koyeb that starts an ngrok tunnel on boot. The Koyeb URL shows the generated ngrok URL, and the ngrok URL serves the proxy UI plus the Rammerhead session routes.
 
 ## Run Locally
 
@@ -37,4 +37,4 @@ When the service starts, the server opens an ngrok HTTPS tunnel to the Koyeb pro
 
 ## Notes
 
-ProxyV uses Scramjet with BareMux and a local Bare server transport, so in-frame navigation, subresources, fetch/XHR, and many client-side routing flows are handled by Scramjet instead of the old custom `/api/proxy` rewriter. Sites that require DRM, strict origin isolation, or aggressive bot checks may still reject or break under any reverse proxy.
+ProxyV uses Rammerhead sessions and the built-in proxy routes. It creates a session, opens the destination inside the embedded frame, and keeps the session ID in localStorage so login state can survive reloads.

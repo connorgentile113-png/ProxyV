@@ -5,3 +5,4 @@ npm-debug.log*
 public/baremux/
 public/libcurl/
 public/scram/
+sessions/
