@@ -3,10 +3,6 @@
 const { mkdirSync } = require("node:fs");
 const { join } = require("node:path");
 const ngrok = require("@ngrok/ngrok");
-const addStaticDirToProxy = require("rammerhead/src/util/addStaticDirToProxy");
-const RammerheadLogging = require("rammerhead/src/classes/RammerheadLogging");
-const RammerheadProxy = require("rammerhead/src/classes/RammerheadProxy");
-const RammerheadSessionFileCache = require("rammerhead/src/classes/RammerheadSessionFileCache");
 
 const root = join(__dirname, "..");
 const publicDir = join(root, "public");
@@ -17,6 +13,10 @@ const host = process.env.HOST || "0.0.0.0";
 mkdirSync(sessionDir, { recursive: true });
 mkdirSync(join(root, "node_modules", "rammerhead", "cache-js"), { recursive: true });
 
+const addStaticDirToProxy = require("rammerhead/src/util/addStaticDirToProxy");
+const RammerheadLogging = require("rammerhead/src/classes/RammerheadLogging");
+const RammerheadProxy = require("rammerhead/src/classes/RammerheadProxy");
+const RammerheadSessionFileCache = require("rammerhead/src/classes/RammerheadSessionFileCache");
 const rammerheadConfig = require("rammerhead/src/config");
 const setupPipeline = require("rammerhead/src/server/setupPipeline");
 const setupRoutes = require("rammerhead/src/server/setupRoutes");
