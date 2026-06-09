@@ -178,6 +178,7 @@ async function initializeScramjet() {
 async function activateScramjetWorker() {
   if (navigator.serviceWorker.controller) return;
 
+  const reloadKey = "proxyv-scramjet-reloaded";
   const controllerReady = new Promise((resolve, reject) => {
     const timeout = window.setTimeout(() => {
       navigator.serviceWorker.removeEventListener("controllerchange", onControllerChange);
@@ -192,12 +193,22 @@ async function activateScramjetWorker() {
     navigator.serviceWorker.addEventListener("controllerchange", onControllerChange, { once: true });
   });
 
-  await navigator.serviceWorker.register("/scramjet-sw.js", { scope: "/" });
+  const registration = await navigator.serviceWorker.register("/scramjet-sw.js", { scope: "/" });
+  await registration.update().catch(() => {});
   await Promise.race([navigator.serviceWorker.ready, controllerReady]);
 
-  if (!navigator.serviceWorker.controller) {
-    throw new Error("Scramjet service worker registered but did not take control.");
+  if (navigator.serviceWorker.controller) {
+    sessionStorage.removeItem(reloadKey);
+    return;
   }
+
+  if (!sessionStorage.getItem(reloadKey)) {
+    sessionStorage.setItem(reloadKey, "1");
+    location.reload();
+    await new Promise(() => {});
+  }
+
+  throw new Error("Scramjet service worker registered but did not take control.");
 }
 
 function isMissingScramjetStoreError(error) {
