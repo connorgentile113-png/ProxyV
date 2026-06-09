@@ -7,8 +7,6 @@ const addStaticDirToProxy = require("rammerhead/src/util/addStaticDirToProxy");
 const RammerheadLogging = require("rammerhead/src/classes/RammerheadLogging");
 const RammerheadProxy = require("rammerhead/src/classes/RammerheadProxy");
 const RammerheadSessionFileCache = require("rammerhead/src/classes/RammerheadSessionFileCache");
-const setupPipeline = require("rammerhead/src/server/setupPipeline");
-const setupRoutes = require("rammerhead/src/server/setupRoutes");
 
 const root = join(__dirname, "..");
 const publicDir = join(root, "public");
@@ -20,6 +18,8 @@ mkdirSync(sessionDir, { recursive: true });
 mkdirSync(join(root, "node_modules", "rammerhead", "cache-js"), { recursive: true });
 
 const rammerheadConfig = require("rammerhead/src/config");
+const setupPipeline = require("rammerhead/src/server/setupPipeline");
+const setupRoutes = require("rammerhead/src/server/setupRoutes");
 
 rammerheadConfig.password = null;
 rammerheadConfig.restrictSessionToIP = false;
