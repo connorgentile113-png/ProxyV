@@ -133,8 +133,8 @@ function ensureScramjet() {
       }
     });
 
-    await scramjet.init();
     await activateScramjetWorker();
+    await initializeScramjet();
 
     if (!navigator.serviceWorker.controller) {
       throw new Error("Scramjet service worker did not take control.");
@@ -163,6 +163,18 @@ function ensureScramjet() {
   return scramjetReady;
 }
 
+async function initializeScramjet() {
+  try {
+    await scramjet.init();
+  } catch (error) {
+    if (!isMissingScramjetStoreError(error)) throw error;
+
+    addDebugEntry("warn", "Resetting stale Scramjet IndexedDB state.");
+    await deleteScramjetDatabase();
+    await scramjet.init();
+  }
+}
+
 async function activateScramjetWorker() {
   if (navigator.serviceWorker.controller) return;
 
@@ -186,6 +198,20 @@ async function activateScramjetWorker() {
   if (!navigator.serviceWorker.controller) {
     throw new Error("Scramjet service worker registered but did not take control.");
   }
+}
+
+function isMissingScramjetStoreError(error) {
+  const message = error && error.message ? error.message : String(error || "");
+  return message.includes("object stores was not found") || message.includes("object store was not found");
+}
+
+function deleteScramjetDatabase() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.deleteDatabase("$scramjet");
+    request.onerror = () => reject(request.error || new Error("Failed to reset Scramjet IndexedDB."));
+    request.onblocked = () => reject(new Error("Scramjet IndexedDB reset was blocked."));
+    request.onsuccess = () => resolve();
+  });
 }
 
 function syncFrameUrl(event) {
