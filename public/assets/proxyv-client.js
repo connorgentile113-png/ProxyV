@@ -134,7 +134,12 @@ function ensureScramjet() {
     });
 
     await scramjet.init();
-    await navigator.serviceWorker.register("/scramjet-sw.js", { scope: "/" });
+    await activateScramjetWorker();
+
+    if (!navigator.serviceWorker.controller) {
+      throw new Error("Scramjet service worker did not take control.");
+    }
+
     await navigator.serviceWorker.ready;
 
     const connection = new BareMux.BareMuxConnection("/baremux/worker.js");
@@ -155,6 +160,26 @@ function ensureScramjet() {
   });
 
   return scramjetReady;
+}
+
+async function activateScramjetWorker() {
+  await navigator.serviceWorker.register("/scramjet-sw.js", { scope: "/" });
+
+  if (navigator.serviceWorker.controller) return;
+
+  await new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      navigator.serviceWorker.removeEventListener("controllerchange", onControllerChange);
+      reject(new Error("Timed out waiting for Scramjet service worker control."));
+    }, 5000);
+
+    function onControllerChange() {
+      window.clearTimeout(timeout);
+      resolve();
+    }
+
+    navigator.serviceWorker.addEventListener("controllerchange", onControllerChange, { once: true });
+  });
 }
 
 function syncFrameUrl(event) {
