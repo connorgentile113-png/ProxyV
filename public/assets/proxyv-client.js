@@ -55,9 +55,7 @@ reloadButton.addEventListener("click", () => {
 detachButton.addEventListener("click", () => {
   if (!currentUrl) return;
 
-  void ensureSession().then((id) => {
-    if (id) window.open(buildSessionUrl(currentUrl, id), "_blank", "noopener,noreferrer");
-  });
+  window.open(buildPublicProxyUrl(currentUrl), "_blank", "noopener,noreferrer");
 });
 
 void refreshStatus();
@@ -104,6 +102,10 @@ function normalizeAddress(input) {
 
 function buildSessionUrl(url, id = sessionId) {
   return `/${id}/${url}`;
+}
+
+function buildPublicProxyUrl(url) {
+  return `/pv/${encodeURIComponent(url)}`;
 }
 
 async function ensureSession() {

@@ -1,5 +1,6 @@
 "use strict";
 
+const { randomBytes } = require("node:crypto");
 const { mkdirSync } = require("node:fs");
 const { join } = require("node:path");
 const ngrok = require("@ngrok/ngrok");
@@ -16,6 +17,7 @@ mkdirSync(join(root, "node_modules", "rammerhead", "cache-js"), { recursive: tru
 const addStaticDirToProxy = require("rammerhead/src/util/addStaticDirToProxy");
 const RammerheadLogging = require("rammerhead/src/classes/RammerheadLogging");
 const RammerheadProxy = require("rammerhead/src/classes/RammerheadProxy");
+const RammerheadSession = require("rammerhead/src/classes/RammerheadSession");
 const RammerheadSessionFileCache = require("rammerhead/src/classes/RammerheadSessionFileCache");
 const rammerheadConfig = require("rammerhead/src/config");
 const setupPipeline = require("rammerhead/src/server/setupPipeline");
@@ -74,6 +76,7 @@ const sessionStore = new RammerheadSessionFileCache({
 sessionStore.attachToProxy(proxyServer);
 setupPipeline(proxyServer, sessionStore);
 setupRoutes(proxyServer, sessionStore, logger);
+proxyServer.addToOnRequestPipeline(handlePublicProxyRoute);
 
 proxyServer.GET("/api/status", (req, res) => {
   sendJson(res, {
@@ -204,4 +207,81 @@ async function shutdown() {
   }
 
   process.exit(0);
+}
+
+function handlePublicProxyRoute(request, response) {
+  if (request.method !== "GET") return false;
+
+  const requestUrl = new URL(request.url || "/", "http://proxyv.local");
+  if (requestUrl.pathname === "/pv" || requestUrl.pathname === "/pv/") {
+    response.writeHead(400, {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-store"
+    });
+    response.end("Use /pv/<proxyurl>");
+    return true;
+  }
+
+  if (!requestUrl.pathname.startsWith("/pv/")) return false;
+
+  const targetUrl = normalizePublicProxyTarget(requestUrl);
+  if (!targetUrl) {
+    response.writeHead(400, {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-store"
+    });
+    response.end("Invalid proxy URL");
+    return true;
+  }
+
+  const sessionId = createPublicSession();
+  response.writeHead(302, {
+    Location: `/${sessionId}/${targetUrl}`,
+    "Cache-Control": "no-store"
+  });
+  response.end();
+  return true;
+}
+
+function normalizePublicProxyTarget(requestUrl) {
+  const rawPath = requestUrl.pathname.slice("/pv/".length);
+  const candidates = [];
+  const rawTarget = rawPath + requestUrl.search;
+  if (rawTarget) candidates.push(rawTarget);
+
+  try {
+    const decodedTarget = decodeURIComponent(rawTarget);
+    if (decodedTarget && decodedTarget !== rawTarget) candidates.unshift(decodedTarget);
+  } catch {}
+
+  for (const candidate of candidates) {
+    const normalized = normalizeAbsoluteUrl(candidate);
+    if (normalized) return normalized;
+  }
+
+  return "";
+}
+
+function normalizeAbsoluteUrl(value) {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") return parsed.toString();
+  } catch {}
+
+  try {
+    const parsed = new URL(`https://${trimmed}`);
+    if (parsed.hostname.includes(".")) return parsed.toString();
+  } catch {}
+
+  return "";
+}
+
+function createPublicSession() {
+  const sessionId = randomBytes(16).toString("hex");
+  const session = new RammerheadSession({ id: sessionId });
+  sessionStore.addSerializedSession(sessionId, session.serializeSession());
+  return sessionId;
 }
